@@ -13,7 +13,7 @@
   
 \********************************************************************/
 
-#include <libxxusb.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -21,6 +21,10 @@
 
 #include <string.h>
 #include "midas.h"
+extern "C"{
+#include <libxxusb.h>
+}
+
 #include "ccusb.h"
 #include "OdbCCusb.h"
 
@@ -43,25 +47,27 @@ BOOL frontend_call_loop = FALSE;
 INT display_period = 000;
 
 /* maximum event size produced by this frontend */
-//INT max_event_size = 10000;
-INT max_event_size = 100000;
+INT max_event_size = 10000;
 
 /* maximum event size for fragmented events (EQ_FRAGMENTED) */
-INT max_event_size_frag = 5 * 1024 * 1024*10;
+INT max_event_size_frag = 5 * 1024 * 1024;
 
 /* buffer size to hold events */
-INT event_buffer_size = 100 * 10000*10;
+INT event_buffer_size = 100 * 10000;
+  //End of MIDAS specific globals , following lines are experiment specific global values
 
 /* number of channels */
-#define N_ADC  4
-#define N_TDC  4
-#define N_SCLR 4
+#define N_ADC8  12
+// #define N_ADCD  12
+// #define N_TDC  4
+// #define N_SCLR 4
 
 /* CAMAC crate and slots */
 #define SLOT_IO   23
-#define SLOT_ADC  10
-#define SLOT_TDC   6
-#define SLOT_SCLR  3
+#define SLOT_ADC8  4
+//#define SLOT_ADCD  13
+//#define SLOT_TDC   6
+//define SLOT_SCLR  3
 
 xxusb_device_type devices[10];
 struct usb_device *dev;
@@ -89,9 +95,9 @@ INT interrupt_configure(INT cmd, INT source, POINTER_T adr);
 /*-- Equipment list ------------------------------------------------*/
 EQUIPMENT equipment[] = {
 
-   {"Trigger",               /* equipment name */
+   {"CCUSB",               /* equipment name */
     {1, 0,                   /* event ID, trigger mask */
-     "SYSTEM",               /* event buffer */
+     "BUF8",               /* event buffer */
      EQ_PERIODIC,            /* equipment type */
      LAM_SOURCE(0, 0xFFFFFF),/* event source crate 0, all stations */
      "MIDAS",                /* format */
@@ -160,11 +166,11 @@ int ccUsbFlush(void) {
       // printf("drain loops: %i (result %i)\n ",k,ret);                                     
       k++;
       if (k>100) ret=0;
-    }
+  
   }
   return (IntArray[0] & 0x8000) ? 0 : IntArray[0];
+  }
 }
-
 /*-- Frontend Init -------------------------------------------------*/
 // Executed once at the start of the applicatoin
 INT frontend_init() {
@@ -176,7 +182,7 @@ INT frontend_init() {
   cm_get_experiment_database(&hDB, &status);
   
   // Map /equipment/<eq_name>/settings 
-  sprintf(set_str, "/Equipment/Trigger/Settings");
+  sprintf(set_str, "/Equipment/CCUSB/Settings");
   
   // create the ODB Settings if not existing under Equipment/<eqname>/
   // If already existing, don't change anything 
@@ -198,15 +204,14 @@ INT frontend_init() {
     return CM_DB_ERROR;
   }
   
-  int ret;
-  printf("Initializing USB device\n");
   // hardware initialization   
   //Find XX_USB devices and open the first one found
-  ret = xxusb_devices_find(devices);
+  printf("Initializing USB device\n");
+  int ret = xxusb_devices_find(devices);
   printf("Testing first USB device; ret=%i\n",ret);
   dev = devices[0].usbdev;
   udev = xxusb_device_open(dev);
-  printf("Initialized USB device: %i\n",udev);
+
   // Make sure CC_USB opened OK
   if(!udev) {
     cm_msg(MERROR, "ccusb", "Failed to Open CC_USB");
@@ -215,22 +220,24 @@ INT frontend_init() {
 
   //  Stop DAQ mode in case it was left running (after crash)
   ret = xxusb_register_write(udev, 1, 0x0);
-  printf("stop DAQ return:%d\n", ret);
-  printf("string error :%s\n", usb_strerror());
+
   if(ret < 0){
     cm_msg(MERROR, "ccusb", "Error writing to CCUSB; error message = %i",ret);
+    return FE_ERR_HW;
   }
 
+  //  printf("stop DAQ return:%d\n", ret);
+
   // Flush old data first
-  ret = ccUsbFlush();
+  ccUsbFlush();
   //  printf("Flush return:%d\n", ret);
 
   // CAMAC CLEAR
-  ret = CAMAC_C(udev);
-  printf("CAMAC_C return:%d\n", ret);
+  CAMAC_C(udev);
+  // printf("CAMAC_C return:%d\n", ret);
   // CAMAC Z
-  ret = CAMAC_Z(udev);
-  printf("CAMAC_Z return:%d\n", ret);
+  CAMAC_Z(udev);
+  // printf("CAMAC_Z return:%d\n", ret);
   
   /* print message and return FE_ERR_HW if frontend should not be started */
   cm_msg(MINFO, "ccusb", "CC-USB ready");
@@ -263,15 +270,17 @@ INT begin_of_run(INT run_number, char *error) {
   // StackXxx(), MRAD16, WMARKER, etc and macros are defined in 
   // in ccusb.h
   //                   n       a   f  data  
-  StackFill(MRAD16 , SLOT_ADC, 0 , 0, 12, stack);// read 12 ADC  
-  StackFill(MRAD16 , SLOT_TDC, 0 , 0, 7, stack); // read  8 TDC
+  StackFill(MRAD16 , SLOT_ADC8, 0 , 0, 12, stack);// read 12 ADC8 
+  // StackFill(MRAD16 , SLOT_ADCD, 0 , 0, 12, stack);// read 12 ADCD 
+  //  StackFill(MRAD16 , SLOT_TDC, 0 , 0, 7, stack); // read  8 TDC
   // Use of F2 can prevent the F9 if last readout is last A  
-  StackFill(CD16   , SLOT_TDC, 0 , 9, 0, stack); // clear TDC, data is ignored (command)  
-  StackFill(CD16   , SLOT_ADC, 0 , 9, 0, stack); // clear ADC
+  //StackFill(CD16   , SLOT_TDC, 0 , 9, 0, stack); // clear TDC, data is ignored (command)  
+  StackFill(CD16   , SLOT_ADC8, 0 , 9, 0, stack); // clear ADC8
+  // StackFill(CD16   , SLOT_ADCD, 0 , 9, 0, stack); // clear ADCD
   StackFill(WMARKER, 0, 0, 0, 0xFEED, stack);    // Our marker 0xfeed
   StackClose(stack);
 
-  #if 0
+  #if 1
   // Debugging Check stack before writing
   printf("stack[0]:%ld\n", stack[0]);
   for (i = 0; i < stack[0]+1; i++) {
@@ -302,20 +311,24 @@ INT begin_of_run(INT run_number, char *error) {
     }
   }
   
+  printf("FInished stacking...\n");
   // Remove Inhibit
   CAMAC_I(udev, FALSE);
   
   // LAM mask from the Equipment
   ret = CAMAC_write(udev, 25, 9, 16, LAM_SOURCE_STATION(equipment[0].info.source), &q, &x);
 
+  printf("FInished stacking...\n");
   // delay LAM timeout[15..8], trigger delay[7..0]
   d16 = ((tscc.lam_timeout & 0xFF) << 8) | (tscc.trig_delay & 0xFF);
   printf ("lam, trigger delay : 0x%x\n", d16);
   ret = CAMAC_write(udev, 25, 2, 16, d16, &q, &x);
 
+  printf("FInished stacking...\n");
   //  Enable LAM
-  ret = CAMAC_read(udev, SLOT_TDC, 0, 26, &d24, &q, &x);
-  ret = CAMAC_read(udev, SLOT_ADC, 0, 26, &d24, &q, &x);
+  // ret = CAMAC_read(udev, SLOT_TDC, 0, 26, &d24, &q, &x);
+  ret = CAMAC_read(udev, SLOT_ADC8, 0, 26, &d24, &q, &x);
+  //ret = CAMAC_read(udev, SLOT_ADCD, 0, 26, &d24, &q, &x);
   // printf("ret:%d q:%d x:%d\n", ret, q, x);
 
   // Opt in Global Mode register N(25) A(1) F(16)    
@@ -323,6 +336,7 @@ INT begin_of_run(INT run_number, char *error) {
   // 0:4096, 1:2048, 2:1024, 3:512, 4:256, 5:128, 6:64, 7:single event
   ret = CAMAC_write(udev, 25, 1, 16, tscc.buffer_size, &q, &x);
 
+  printf("FInished stacking...\n");
   // CAMAC_DGG creates a gate pulse with control of delay, width 
   // in 10ns increments. 
   // BUT range is limited to 16bit anyway annd only GG-A (0) provides
@@ -331,9 +345,11 @@ INT begin_of_run(INT run_number, char *error) {
   //                DGG_A Pulser NimO1               invert latch
   ret = CAMAC_DGG(udev, 0,     7,    1, tscc.delay/10, tscc.width/10,     0,    0); 
 
+  printf("FInished stacking...\n");
   //  First clear before first LAM/readout
-  ret = CAMAC_read(udev, SLOT_ADC, 0, 9, &d24, &q, &x);
-  ret = CAMAC_read(udev, SLOT_TDC, 0, 9, &d24, &q, &x);
+  ret = CAMAC_read(udev, SLOT_ADC8, 0, 9, &d24, &q, &x);
+  // ret = CAMAC_read(udev, SLOT_ADCD, 0, 9, &d24, &q, &x);
+  // ret = CAMAC_read(udev, SLOT_TDC, 0, 9, &d24, &q, &x);
 
   //  Start DAQ mode
   ret = xxusb_register_write(udev, 1, 0x1);
@@ -341,8 +357,6 @@ INT begin_of_run(INT run_number, char *error) {
   // NO CAMAC calls ALLOWED beyond this point!!!!!!!!
   //  as the Module is in acquisition mode now
   //
-
-  printf("BOR finished\n");
 
   return SUCCESS;
 }
@@ -388,8 +402,9 @@ INT resume_run(INT run_number, char *error)
   long d24;
 
   //  Clear module
-  CAMAC_read(udev, SLOT_ADC, 0, 9, &d24, &q, &x);
-  CAMAC_read(udev, SLOT_TDC, 0, 9, &d24, &q, &x);
+  CAMAC_read(udev, SLOT_ADC8, 0, 9, &d24, &q, &x);
+  //CAMAC_read(udev, SLOT_ADCD, 0, 9, &d24, &q, &x);
+  // CAMAC_read(udev, SLOT_TDC, 0, 9, &d24, &q, &x);
 
   // Remove Inhibit
   CAMAC_I(udev, FALSE);
@@ -454,23 +469,26 @@ extern "C" INT interrupt_configure(INT cmd, INT source, POINTER_T adr)
 /*-- Event readout -------------------------------------------------*/
 INT read_trigger_event(char *pevent, INT off)
 {
-  //printf("read_trigger_event\n");
-
   WORD *pdata;
   int ret, nd16=0;
-    
+  
   /* init bank structure */
   bk_init(pevent);
   
-  /* create Midas bank named ADTD */
-  bk_create(pevent, "ADTD", TID_WORD, (void **)&pdata);
-  
+    /* create Midas bank named ADC8 for ADC card in slot 8*/
+  bk_create(pevent, "ADC8", TID_WORD, (void **)&pdata);
+
+ /* create Midas bank named ADCD D=13 for ADC card in slot 13*/
+  //bk_create(pevent, "ADCD", TID_WORD, (void **)&pdata);
+
+ /* create Midas bank named ADTD */
+//  bk_create(pevent, "ADTD", TID_WORD, (void **)&pdata);
+
   // Read CC-USB buffer, returns nbytes, use for 32-bit data
   ret = xxusb_bulk_read(udev, pdata, 8192, 500);  
-  //ret = xxusb_bulk_read(udev, pdata, 800, 500);  
   if (ret > 0) {
     nd16 = ret / 2;                 // # of d16
-    int nevents = (pdata[0] & 0xffff);   // # of LAM in the buffer
+    int nevents = (pdata[0]& 0xffff);   // # of LAM in the buffer
  #if 0
     int evtsize = (pdata[1] & 0xffff);  // # of words per event
     printf("Read data: ret:%d  nd16:%d nevent:%d, evtsize:%d\n", ret, nd16, nevents, evtsize);
