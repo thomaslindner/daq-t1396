@@ -43,13 +43,14 @@ BOOL frontend_call_loop = FALSE;
 INT display_period = 000;
 
 /* maximum event size produced by this frontend */
-INT max_event_size = 10000;
+//INT max_event_size = 10000;
+INT max_event_size = 100000;
 
 /* maximum event size for fragmented events (EQ_FRAGMENTED) */
-INT max_event_size_frag = 5 * 1024 * 1024;
+INT max_event_size_frag = 5 * 1024 * 1024*10;
 
 /* buffer size to hold events */
-INT event_buffer_size = 100 * 10000;
+INT event_buffer_size = 100 * 10000*10;
 
 /* number of channels */
 #define N_ADC  4
@@ -197,15 +198,15 @@ INT frontend_init() {
     return CM_DB_ERROR;
   }
   
-
+  int ret;
   printf("Initializing USB device\n");
   // hardware initialization   
   //Find XX_USB devices and open the first one found
-  xxusb_devices_find(devices);
-  printf("Testing first USB device\n");
+  ret = xxusb_devices_find(devices);
+  printf("Testing first USB device; ret=%i\n",ret);
   dev = devices[0].usbdev;
   udev = xxusb_device_open(dev);
-  printf("Initialized USB device\n");
+  printf("Initialized USB device: %i\n",udev);
   // Make sure CC_USB opened OK
   if(!udev) {
     cm_msg(MERROR, "ccusb", "Failed to Open CC_USB");
@@ -213,19 +214,23 @@ INT frontend_init() {
   } 
 
   //  Stop DAQ mode in case it was left running (after crash)
-  xxusb_register_write(udev, 1, 0x0);
-  //  printf("stop DAQ return:%d\n", ret);
+  ret = xxusb_register_write(udev, 1, 0x0);
+  printf("stop DAQ return:%d\n", ret);
+  printf("string error :%s\n", usb_strerror());
+  if(ret < 0){
+    cm_msg(MERROR, "ccusb", "Error writing to CCUSB; error message = %i",ret);
+  }
 
   // Flush old data first
-  ccUsbFlush();
+  ret = ccUsbFlush();
   //  printf("Flush return:%d\n", ret);
 
   // CAMAC CLEAR
-  CAMAC_C(udev);
-  // printf("CAMAC_C return:%d\n", ret);
+  ret = CAMAC_C(udev);
+  printf("CAMAC_C return:%d\n", ret);
   // CAMAC Z
-  CAMAC_Z(udev);
-  // printf("CAMAC_Z return:%d\n", ret);
+  ret = CAMAC_Z(udev);
+  printf("CAMAC_Z return:%d\n", ret);
   
   /* print message and return FE_ERR_HW if frontend should not be started */
   cm_msg(MINFO, "ccusb", "CC-USB ready");
@@ -337,6 +342,8 @@ INT begin_of_run(INT run_number, char *error) {
   //  as the Module is in acquisition mode now
   //
 
+  printf("BOR finished\n");
+
   return SUCCESS;
 }
 
@@ -447,9 +454,11 @@ extern "C" INT interrupt_configure(INT cmd, INT source, POINTER_T adr)
 /*-- Event readout -------------------------------------------------*/
 INT read_trigger_event(char *pevent, INT off)
 {
+  //printf("read_trigger_event\n");
+
   WORD *pdata;
   int ret, nd16=0;
-  
+    
   /* init bank structure */
   bk_init(pevent);
   
@@ -458,9 +467,10 @@ INT read_trigger_event(char *pevent, INT off)
   
   // Read CC-USB buffer, returns nbytes, use for 32-bit data
   ret = xxusb_bulk_read(udev, pdata, 8192, 500);  
+  //ret = xxusb_bulk_read(udev, pdata, 800, 500);  
   if (ret > 0) {
     nd16 = ret / 2;                 // # of d16
-    int nevents = (pdata[0]& 0xffff);   // # of LAM in the buffer
+    int nevents = (pdata[0] & 0xffff);   // # of LAM in the buffer
  #if 0
     int evtsize = (pdata[1] & 0xffff);  // # of words per event
     printf("Read data: ret:%d  nd16:%d nevent:%d, evtsize:%d\n", ret, nd16, nevents, evtsize);
