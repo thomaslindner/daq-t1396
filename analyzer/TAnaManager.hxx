@@ -26,7 +26,8 @@
 #include "TDT724Waveform.h"
 #include "TTRB3Histogram.hxx"
 #include "TCamacADCHistogram.h"
-
+#include "TCamacADCDifferences.h"
+#include "TH2D.h"
 /// This is an example of how to organize a set of different histograms
 /// so that we can access the same information in a display or a batch
 /// analyzer.
@@ -69,7 +70,9 @@ public:
         TTRB3Histograms* GetTRB3Histograms();
         TTRB3DiffHistograms* GetTRB3DiffHistograms();
         TCamacADCHistograms* GetCamacADCHistograms();
+        TCamacADCDifferences* GetCamacADCDifferences();
 
+  TH2D *adcComparison[16];
 
 private:
 
@@ -85,6 +88,8 @@ private:
   	TTRB3Histograms *fTRB3Histograms;
     	TTRB3DiffHistograms *fTRB3DiffHistograms;
     	TCamacADCHistograms *fCamacADCHistograms;
+    	TCamacADCDifferences *fCamacADCDifferences;
+
 
   // Make some cross-channel histograms
   TH2F *fV1720PHCompare;

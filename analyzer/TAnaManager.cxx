@@ -1,6 +1,7 @@
 #include "TAnaManager.hxx"
 #include "TV1720RawData.h"
 
+#include "TCamacADCData.hxx"
 
 TAnaManager::TAnaManager(){
 
@@ -76,8 +77,45 @@ TAnaManager::TAnaManager(){
 #endif
 
 #ifdef USE_CAMACADC
-	fCamacADCHistograms = new TCamacADCHistograms();
-	fCamacADCHistograms->DisableAutoUpdate();  // disable auto-update.  Update histo in AnaManager.
+   fCamacADCHistograms = new TCamacADCHistograms();
+   fCamacADCHistograms->DisableAutoUpdate();  // disable auto-update.  Update histo in AnaManager.
+   //	fCamacADCDifferences = new TCamacADCDifferences();
+   //fCamacADCDifferences->DisableAutoUpdate();  // disable auto-update.  Update histo in AnaManager.
+   
+   for(int i = 0; i < 16; i++){ // loop over channels    
+     
+     char name[100];
+     char title[100];
+     sprintf(name,"CamacADC_%i_%i",0,i);
+     
+     // Delete old histograms, if we already have them
+     //	  TH1D *old = (TH1D*)gDirectory->Get(name);
+     //if (old){
+     //  delete old;
+     // }
+     
+     // Create new histograms
+	  
+     sprintf(title,"CAMAC ADC for channel=%i vs Lead Glass",i);
+     if(i == 0) sprintf(title,"Gas Cherenkov1 vs Lead Glass",i);
+     if(i == 1) sprintf(title,"Gas Cherenkov2 vs Lead Glass",i);
+     if(i == 2) sprintf(title,"Gas Cherenkov3 vs Lead Glass",i);
+     if(i == 3) sprintf(title,"TRIUMF index=1.0257 1 vs Lead Glass",i);
+     if(i == 4) sprintf(title,"TRIUMF index=1.0257 2 vs Lead Glass",i);
+     if(i == 5) sprintf(title,"Chiba index=1.0046 vs Lead Glass",i);
+     if(i == 6) sprintf(title,"Chiba index=1.0126 vs Lead Glass",i);
+     if(i == 7) sprintf(title,"Lead Glass",i);
+     if(i == 8) sprintf(title,"TRIUMF PMT 2 vs TRIUMF PMT 1",i);
+     if(i == 9) sprintf(title,"Chiba 1.0046 vs TRIUMF PMT 1 ",i);
+     if(i == 10) sprintf(title,"Chiba 1.0126 vs TRIUMF PMT 1 ",i);
+      
+     adcComparison[i] = new TH2D(name,title,800,0,800,400,0,400);
+     adcComparison[i]->SetYTitle("ADC value");
+     adcComparison[i]->SetXTitle("Lead Glass ADC Value");
+     
+   }
+   
+
 #endif
 
 };
@@ -87,51 +125,39 @@ TAnaManager::TAnaManager(){
 int TAnaManager::ProcessMidasEvent(TDataContainer& dataContainer){
 
 
-	if(fV792Histogram) fV792Histogram->UpdateHistograms(dataContainer); 
-  	if(fV1190Histogram)  fV1190Histogram->UpdateHistograms(dataContainer); 
-	if(fL2249Histogram)  fL2249Histogram->UpdateHistograms(dataContainer); 
-  	if(fAgilentHistogram)  fAgilentHistogram->UpdateHistograms(dataContainer); 
-	if(fV1720Waveform)  fV1720Waveform->UpdateHistograms(dataContainer);
-	if(fV1720Correlations)  fV1720Correlations->UpdateHistograms(dataContainer); 
-  	if(fV1730DppWaveform)  fV1730DppWaveform->UpdateHistograms(dataContainer); 
-	if(fV1730RawWaveform)  fV1730RawWaveform->UpdateHistograms(dataContainer);        
-	if(fDT724Waveform)  fDT724Waveform->UpdateHistograms(dataContainer);
-        if(fTRB3Histograms)  fTRB3Histograms->UpdateHistograms(dataContainer);
-        if(fTRB3DiffHistograms)  fTRB3DiffHistograms->UpdateHistograms(dataContainer); 
-        if(fCamacADCHistograms)  fCamacADCHistograms->UpdateHistograms(dataContainer); 
+  if(fV792Histogram) fV792Histogram->UpdateHistograms(dataContainer); 
+  if(fV1190Histogram)  fV1190Histogram->UpdateHistograms(dataContainer); 
+  if(fL2249Histogram)  fL2249Histogram->UpdateHistograms(dataContainer); 
+  if(fAgilentHistogram)  fAgilentHistogram->UpdateHistograms(dataContainer); 
+  if(fV1720Waveform)  fV1720Waveform->UpdateHistograms(dataContainer);
+  if(fV1720Correlations)  fV1720Correlations->UpdateHistograms(dataContainer); 
+  if(fV1730DppWaveform)  fV1730DppWaveform->UpdateHistograms(dataContainer); 
+  if(fV1730RawWaveform)  fV1730RawWaveform->UpdateHistograms(dataContainer);        
+  if(fDT724Waveform)  fDT724Waveform->UpdateHistograms(dataContainer);
+  if(fTRB3Histograms)  fTRB3Histograms->UpdateHistograms(dataContainer);
+  if(fTRB3DiffHistograms)  fTRB3DiffHistograms->UpdateHistograms(dataContainer); 
+  if(fCamacADCHistograms)  fCamacADCHistograms->UpdateHistograms(dataContainer); 
+  
+  TCamacData *data = dataContainer.GetEventData<TCamacData>("ADC8");
+  if(!data) return 1;
+  
+  /// Get the Vector of ADC Measurements.
+  std::vector<CamacADCEvent> measurements = data->GetMeasurements();
+  for(unsigned int i = 0; i < measurements.size(); i++){ // loop over measurements
+    
+    // For each measurement, fill the ADC values for each channel.
+    for(unsigned int ch = 0; ch < 6; ch++){
+      adcComparison[ch]->Fill(measurements[i].GetADC(7),measurements[i].GetADC(ch));
+    }
 
-        // Do little analysis of the V1720 data, as example...
-        if(fV1720Waveform){
-          
-          TV1720RawData *v1720 = dataContainer.GetEventData<TV1720RawData>("W200");
-
-          if(v1720 && !v1720->IsZLECompressed()){      
-
-            double time[2],ph[2];
-            
-            for(int i = 0; i < 2; i++){ // loop first two channels
-              
-              TV1720RawChannel channelData = v1720->GetChannelData(i);
-              if(channelData.GetNSamples() <= 0) continue;
-              
-              double max_adc_value = -1.0;
-              double max_adc_time = -1;
-              for(int j = 0; j < channelData.GetNSamples(); j++){
-                double adc = channelData.GetADCSample(j);
-                if(adc > max_adc_value){
-                  max_adc_value = adc;
-                  max_adc_time = j * 4.0; // 4ns per bin
-                }
-              }
-              time[i] = max_adc_time;
-              ph[i] = max_adc_value;
-              //std::cout << i << " "  << max_adc_time << " " << max_adc_value << std::endl;
-            }
-            fV1720PHCompare->Fill(ph[0],ph[1]);
-            fV1720TimeCompare->Fill(time[0],time[1]);
-          }
-        }
-        return 1;
+    adcComparison[8]->Fill(measurements[i].GetADC(3),measurements[i].GetADC(4));
+    adcComparison[9]->Fill(measurements[i].GetADC(3),measurements[i].GetADC(5));
+    adcComparison[10]->Fill(measurements[i].GetADC(3),measurements[i].GetADC(6));
+  }
+  
+  
+  
+  return 1;
 }
 
 
@@ -193,4 +219,5 @@ TDT724Waveform* TAnaManager::GetDT724Histograms(){return fDT724Waveform;}
 TTRB3Histograms* TAnaManager::GetTRB3Histograms(){return fTRB3Histograms;}
 TTRB3DiffHistograms* TAnaManager::GetTRB3DiffHistograms(){return fTRB3DiffHistograms;}
 TCamacADCHistograms* TAnaManager::GetCamacADCHistograms(){return fCamacADCHistograms;}
+TCamacADCDifferences* TAnaManager::GetCamacADCDifferences(){return fCamacADCDifferences;}
 

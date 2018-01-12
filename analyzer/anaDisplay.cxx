@@ -10,6 +10,7 @@
 
 
 #include "TAnaManager.hxx"
+#include "TMulticanvas.h"
 #include "TTRB3Data.hxx"
 
 class MyTestLoop: public TRootanaDisplay { 
@@ -70,6 +71,26 @@ public:
 
     if(anaManager->HaveCamacADCHistograms()){
       AddSingleCanvas(new TFancyHistogramCanvas(anaManager->GetCamacADCHistograms(),"CAMAC ADC"));
+      // AddSingleCanvas(new TFancyHistogramCanvas(anaManager->GetCamacADCDifferences(),"CAMAC Comparisons"));
+      TMulticanvas *canvas = new TMulticanvas("Gas Cherenkov Comparisons");
+      canvas->AddHisto2D(anaManager->adcComparison[0],0);
+      canvas->AddHisto2D(anaManager->adcComparison[1],1);
+      canvas->AddHisto2D(anaManager->adcComparison[2],2);
+      AddSingleCanvas(canvas);
+
+      TMulticanvas *canvas2 = new TMulticanvas("Aerogel Cherenkov vs Lead Comparisons");
+      canvas2->AddHisto2D(anaManager->adcComparison[3],0);
+      canvas2->AddHisto2D(anaManager->adcComparison[4],1);
+      canvas2->AddHisto2D(anaManager->adcComparison[5],2);
+      canvas2->AddHisto2D(anaManager->adcComparison[6],3);
+      AddSingleCanvas(canvas2);
+
+      TMulticanvas *canvas3 = new TMulticanvas("Aerogel vs Aerogel Comparisons");
+      canvas3->AddHisto2D(anaManager->adcComparison[8],0);
+      canvas3->AddHisto2D(anaManager->adcComparison[9],1);
+      canvas3->AddHisto2D(anaManager->adcComparison[10],2);
+      AddSingleCanvas(canvas3);
+
     }
     
     SetDisplayName("Example Display");
