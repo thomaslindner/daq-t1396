@@ -177,12 +177,44 @@ int ccUsbFlush(void) {
   }
   printf("\n");
   printf("First bin %x\n",IntArray[0]);
-
-  printf("Size short %u\n",sizeof(short));
   return (IntArray[0] & 0xfff);
-  //return (IntArray[0] & 0x8000) ? 0 : IntArray[0];
-  
+
 }
+
+BOOL in_deferred_transition = FALSE;
+BOOL finished_clearing_buffer = FALSE;
+int number_extra_reads = 0;
+
+// This function used to setup deferred transition, where we read the USB buffer 
+// a couple extra times at the end of the run to clear out the events.
+BOOL clear_buffer_events(int transition, BOOL first){
+
+  if(first){
+
+    //  Stop DAQ mode
+    int ret = xxusb_register_write(udev, 1, 0x0);
+    printf("stopping CAMAC xxusb_register_write=%d\n", ret);
+
+    finished_clearing_buffer = FALSE;
+    in_deferred_transition = TRUE;
+    number_extra_reads = 0;
+    printf("Starting deferred to clear USB buffer\n");
+  }
+
+  if(finished_clearing_buffer){
+    printf("Finished deferred transition after %i extra reads.\n",number_extra_reads);
+    return TRUE;
+  }
+
+  if(number_extra_reads > 10){
+    cm_msg(MERROR, "clear_buffer_events", "Didn't manage to clear CCUSB buffer after 10 extra reads.\n");
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+
 /*-- Frontend Init -------------------------------------------------*/
 // Executed once at the start of the applicatoin
 INT frontend_init() {
@@ -215,7 +247,11 @@ INT frontend_init() {
     cm_msg(MERROR, "ccusb", "cannot open record (%s)", set_str);
     return CM_DB_ERROR;
   }
-  
+
+  // Setup a deferred transition so that we can read out any events that remain in
+  // buffer at the end of the run.
+  cm_register_deferred_transition(TR_STOP,clear_buffer_events);
+
   // hardware initialization   
   //Find XX_USB devices and open the first one found
   printf("Initializing USB device\n");
@@ -310,7 +346,7 @@ INT begin_of_run(INT run_number, char *error) {
   } else {
     printf("Nbytes(ret) from stack_write:%d\n", ret);
     for (i = 0; i < (ret/2); i++) {
-      printf("Wstack[%i]=0x%lx\n", i, stack[i]);
+      if(0) printf("Wstack[%i]=0x%lx\n", i, stack[i]);
     }
   }
   #endif
@@ -322,7 +358,7 @@ INT begin_of_run(INT run_number, char *error) {
   } else {
     printf("Nbytes(ret) from stack_read:%d\n", ret);
     for (i = 0; i < (ret/2); i++) {
-      printf("Rstack[%i]=0x%lx\n", i, stack[i]);
+      if(0) printf("Rstack[%i]=0x%lx\n", i, stack[i]);
     }
   }
   
@@ -373,7 +409,11 @@ INT begin_of_run(INT run_number, char *error) {
   //  as the Module is in acquisition mode now
   //
 
+  // Count total events in run.
   EventsInRun = 0;
+  // Set value for deferred transition (to readout last events).
+  in_deferred_transition = FALSE;
+  finished_clearing_buffer = FALSE;
 
   return SUCCESS;
 }
@@ -388,11 +428,10 @@ INT end_of_run(INT run_number, char *error)
   // Set Inhibit
   //  CAMAC_I(udev, TRUE);
 
-  // -PAA-
-  // flush data, these data are lost as the run is already closed.
-  // will implement deferred transition later to fix this issue
+  // Flush data.
+  // This shouldn't do anything, since we flushed all the events with deferred transition.
   ret = ccUsbFlush();
-  cm_msg(MINFO, "ccusb", "Flushed %d events", ret);
+  if(ret > 0) cm_msg(MINFO, "ccusb", "Flushed %d events; surprising", ret);
   EventsInRun += ret;
   cm_msg(MINFO, "ccusb", "Total number of events read in this run: %i \n",EventsInRun);
   return SUCCESS;
@@ -491,6 +530,10 @@ INT read_trigger_event(char *pevent, INT off)
   WORD *pdata;
   int ret, nd16=0;
   
+  if(in_deferred_transition){
+    number_extra_reads++;
+  }
+
   /* init bank structure */
   bk_init(pevent);
   
@@ -507,14 +550,16 @@ INT read_trigger_event(char *pevent, INT off)
   ret = xxusb_bulk_read(udev, pdata, 8192, 500);  
   if (ret > 0) {
     nd16 = ret / 2;                 // # of d16
-    int nevents = (pdata[0]& 0xffff);   // # of LAM in the buffer
+    int nevents = (pdata[0]& 0xfff);   // # of LAM in the buffer
     EventsInRun += nevents;
  #if 0
     int evtsize = (pdata[1] & 0xffff);  // # of words per event
     printf("Read data: ret:%d  nd16:%d nevent:%d, evtsize:%d\n", ret, nd16, nevents, evtsize);
 #endif
 
-    if (nevents & 0x8000) return 0;  // Skip event
+    //    if (nevents & 0x8000) return 0;  // Skip event
+    if(pdata[0] & 0x8000)cm_msg(MINFO, "read_trigger_event", "Readout last CAMAC event in run.");
+      
     
     if (nd16 > 0) {
       // Adjust pointer (include nevents, evtsize)
@@ -524,11 +569,18 @@ INT read_trigger_event(char *pevent, INT off)
     // Close bank
     bk_close(pevent, pdata);
 
+    printf("readout non-zero bytes from CAMAC usb\n");
     // Done with a valid event
     return bk_size(pevent); 
 
  } else {
-    //printf("no read ret:%d\n", ret);
+    //    printf("no read ret:%d\n", ret);
+
+    // we finished the deferred transition when we do a read of USB buffer 
+    // and don't get any extra data.
+    if(in_deferred_transition){      
+      finished_clearing_buffer = TRUE; 
+    }
     return 0;
   }
 }
