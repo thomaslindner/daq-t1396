@@ -31,7 +31,16 @@ void TCamacADCHistograms::CreateHistograms(){
 
     // Create new histograms
     
-    sprintf(title,"CAMAC ADC for channel=%i",i);	
+    sprintf(title,"CAMAC ADC for channel=%i",i);
+    if(i == 0) sprintf(title,"Gas Cherenkov1",i);
+    if(i == 1) sprintf(title,"Gas Cherenkov2",i);
+    if(i == 2) sprintf(title,"Gas Cherenkov3",i);
+    if(i == 3) sprintf(title,"TRIUMF index=1.0257 1",i);
+    if(i == 4) sprintf(title,"TRIUMF index=1.0257 2",i);
+    if(i == 5) sprintf(title,"Chiba index=1.0046",i);
+    if(i == 6) sprintf(title,"Chiba index=1.0126",i);
+    if(i == 7) sprintf(title,"Lead Glass",i);
+
     
     TH1D *tmp = new TH1D(name,title,2100,0,2100);
     tmp->SetYTitle("ADC value");

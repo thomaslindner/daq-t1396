@@ -23,6 +23,7 @@ public:
   TAnaManager *anaManager;
   
   Analyzer() {
+    SetOutputFilename("root_histograms");
     //DisableAutoMainWindow();
     UseBatchMode();
     anaManager = 0;

@@ -86,7 +86,7 @@ TAnaManager::TAnaManager(){
      
      char name[100];
      char title[100];
-     sprintf(name,"CamacADC_%i_%i",0,i);
+     sprintf(name,"CamacADC_2D_%i_%i",0,i);
      
      // Delete old histograms, if we already have them
      //	  TH1D *old = (TH1D*)gDirectory->Get(name);

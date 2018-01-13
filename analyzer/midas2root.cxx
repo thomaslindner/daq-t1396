@@ -1,8 +1,8 @@
 // Example Program for converting MIDAS format to ROOT format.
 //
-// T. Lindner (Jan 2016) 
+// T. Lindner (Jan 2018) 
 //
-// Example is for the CAEN V792 ADC module
+// Saving 12 CAMAC ADC values.
 
 #include <stdio.h>
 #include <iostream>
@@ -13,29 +13,17 @@
 #include "TFile.h"
 #include "TTree.h"
 
-#include "TAnaManager.hxx"
-
-#ifdef USE_V792
-#include "TV792Data.hxx"
-#endif
+#include "TCamacADCData.hxx"
 
 class Analyzer: public TRootanaEventLoop {
 
 public:
 
-  // An analysis manager.  Define and fill histograms in 
-  // analysis manager.
-  TAnaManager *anaManager;
 
   // The tree to fill.
   TTree *fTree;
 
-#ifdef USE_V792
-  // CAEN V792 tree variables
-  int nchannels;
-  int adc_value[32];
-#endif
-
+  int adc_value[12];
 
   Analyzer() {
 
@@ -53,17 +41,13 @@ public:
     
     // Create a TTree
     fTree = new TTree("midas_data","MIDAS data");
-
-#ifdef USE_V792    
-    fTree->Branch("nchannels",&nchannels,"nchannels/I");
-    fTree->Branch("adc_value",adc_value,"adc_value[nchannels]/I");
-#endif
+    fTree->Branch("adc_value",adc_value,"adc_value[12]/I");
 
   }   
 
 
   void EndRun(int transition,int run,int time){
-        printf("\n");
+    printf("\n");
   }
 
   
@@ -75,27 +59,22 @@ public:
     int id = dataContainer.GetMidasEvent().GetSerialNumber();
     if(id%10 == 0) printf(".");
 
-
-#ifdef USE_V792    
-    TV792Data *data = dataContainer.GetEventData<TV792Data>("ADC0");
-    if(data){
-      nchannels = 32;
-      for(int i = 0; i < nchannels;i++) adc_value[i] = 0;
+    TCamacData *data = dataContainer.GetEventData<TCamacData>("ADC8");
+    if(!data) return 1;
+    
+    /// Get the Vector of ADC Measurements.
+    std::vector<CamacADCEvent> measurements = data->GetMeasurements();
+    for(unsigned int i = 0; i < measurements.size(); i++){ // loop over measurements
       
-      /// Get the Vector of ADC Measurements.
-      std::vector<VADCMeasurement> measurements = data->GetMeasurements();
-      for(unsigned int i = 0; i < measurements.size(); i++){ // loop over measurements
-        
-        int chan = measurements[i].GetChannel();
-        uint32_t adc = measurements[i].GetMeasurement();
-        
-        if(chan >= 0 && chan < nchannels)
-          adc_value[chan] = adc;
+      for(int ch = 0; ch < 12; ch++){
+	adc_value[ch] = measurements[i].GetADC(ch);
       }
-    }
-#endif
 
-    fTree->Fill();
+      fTree->Fill();
+
+    }
+
+
 
     return true;
 
@@ -126,12 +105,12 @@ public:
       if (run != num[0]) {
         std::cerr << "File name run number (" << num[0]
                   << ") disagrees with MIDAS run (" << run << ")" << std::endl;
-        exit(1);
+        //exit(1);
       }
-      sprintf(buff,"output_%.6d_%.4d.root", run, num[1]);
+      sprintf(buff,"midas2root_%.6d_%.4d.root", run, num[1]);
       printf("Using filename %s\n",buff);
     } else {
-      sprintf(buff,"output_%.6d.root", run);
+      sprintf(buff,"midas2root_%.6d.root", run);
     }
     return std::string(buff);
   };

@@ -15,5 +15,6 @@ export MidasDir=/data/t1396/midas_data/
 
 # Do the conversion
 /home/nfs/ftbf_user/midas-daq/daq-t1396/analyzer/midas2root.exe $MidasDir/$Filename
+/home/nfs/ftbf_user/midas-daq/daq-t1396/analyzer/ana.exe $MidasDir/$Filename
 
 
