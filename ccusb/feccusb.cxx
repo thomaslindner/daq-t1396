@@ -64,7 +64,8 @@ INT event_buffer_size = 100 * 10000;
 
 /* CAMAC crate and slots */
 #define SLOT_IO   23
-#define SLOT_ADC8  4
+//#define SLOT_ADC8  4
+#define SLOT_ADC8  10
 //#define SLOT_ADCD  13
 //#define SLOT_TDC   6
 //define SLOT_SCLR  3
@@ -163,13 +164,24 @@ int ccUsbFlush(void) {
   while(ret>0) {
     ret = xxusb_bulk_read(udev, IntArray, 8192, 100);
     if(ret>0) {
-      // printf("drain loops: %i (result %i)\n ",k,ret);                                     
+      printf("drain loops: %i (result %i)\n ",k,ret);                                     
       k++;
       if (k>100) ret=0;
+
+      // Last event dump
+      for(int i =0; i < ret/2; i++){
+	printf("%x ",IntArray[i] & 0xffff);
+	if(i%8==7) printf("\n");
+      }
+    }
+  }
+  printf("\n");
+  printf("First bin %x\n",IntArray[0]);
+
+  printf("Size short %u\n",sizeof(short));
+  return (IntArray[0] & 0xfff);
+  //return (IntArray[0] & 0x8000) ? 0 : IntArray[0];
   
-  }
-  return (IntArray[0] & 0x8000) ? 0 : IntArray[0];
-  }
 }
 /*-- Frontend Init -------------------------------------------------*/
 // Executed once at the start of the applicatoin
@@ -251,6 +263,9 @@ INT frontend_exit()
   xxusb_device_close(udev);
   return SUCCESS;
 }
+
+// Keep track of number of events in the run
+int EventsInRun = 0;
 
 /*-- Begin of Run --------------------------------------------------*/
 // Done on every begin of run 
@@ -358,6 +373,8 @@ INT begin_of_run(INT run_number, char *error) {
   //  as the Module is in acquisition mode now
   //
 
+  EventsInRun = 0;
+
   return SUCCESS;
 }
 
@@ -376,6 +393,8 @@ INT end_of_run(INT run_number, char *error)
   // will implement deferred transition later to fix this issue
   ret = ccUsbFlush();
   cm_msg(MINFO, "ccusb", "Flushed %d events", ret);
+  EventsInRun += ret;
+  cm_msg(MINFO, "ccusb", "Total number of events read in this run: %i \n",EventsInRun);
   return SUCCESS;
 }
 
@@ -489,6 +508,7 @@ INT read_trigger_event(char *pevent, INT off)
   if (ret > 0) {
     nd16 = ret / 2;                 // # of d16
     int nevents = (pdata[0]& 0xffff);   // # of LAM in the buffer
+    EventsInRun += nevents;
  #if 0
     int evtsize = (pdata[1] & 0xffff);  // # of words per event
     printf("Read data: ret:%d  nd16:%d nevent:%d, evtsize:%d\n", ret, nd16, nevents, evtsize);
@@ -508,7 +528,7 @@ INT read_trigger_event(char *pevent, INT off)
     return bk_size(pevent); 
 
  } else {
-    printf("no read ret:%d\n", ret);
+    //printf("no read ret:%d\n", ret);
     return 0;
   }
 }
