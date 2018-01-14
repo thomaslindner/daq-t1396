@@ -2,6 +2,10 @@
   Name:         feccusb.cxx
   Created by:   Pierre-Andre Amaudruz
 
+  Modified by:  Thomas Lindner, Jan 2018
+                Added deferred transition so that the last, unfilled 
+                CAMAC buffer gets fully read out.
+
   Contents:     Experiment specific readout code (user part) of
                 Midas frontend. This example provide a template 
                 for data acquisition using the CC-USB from Wiener
@@ -10,6 +14,8 @@
    function. But as multiple trigger(lam) can be collected in the buffer. 
    Test shows that with a buffer of 4KD16 (mode:0) acquisition up to
    350KB/s for 8.3Kevt/s -> about 6us per D16 camac transfer average.
+
+
   
 \********************************************************************/
 
@@ -104,7 +110,7 @@ EQUIPMENT equipment[] = {
      "MIDAS",                /* format */
      TRUE,                   /* enabled */
      RO_RUNNING,             /* read only when running */
-     10,                     /* poll for 10ms */
+     20,                     /* poll for 10ms */
      0,                      /* stop run after this event limit */
      0,                      /* number of sub events */
      0,                      /* don't log history */
@@ -300,6 +306,12 @@ INT frontend_exit()
   return SUCCESS;
 }
 
+// Variables for flushing buffer after spill
+#include "sys/time.h"
+BOOL seenFullEvents = false;
+struct timeval lastFullEventTime;  
+int EventsPerSpill = 0;
+
 // Keep track of number of events in the run
 int EventsInRun = 0;
 
@@ -369,13 +381,11 @@ INT begin_of_run(INT run_number, char *error) {
   // LAM mask from the Equipment
   ret = CAMAC_write(udev, 25, 9, 16, LAM_SOURCE_STATION(equipment[0].info.source), &q, &x);
 
-  printf("FInished stacking...\n");
   // delay LAM timeout[15..8], trigger delay[7..0]
   d16 = ((tscc.lam_timeout & 0xFF) << 8) | (tscc.trig_delay & 0xFF);
   printf ("lam, trigger delay : 0x%x\n", d16);
   ret = CAMAC_write(udev, 25, 2, 16, d16, &q, &x);
 
-  printf("FInished stacking...\n");
   //  Enable LAM
   // ret = CAMAC_read(udev, SLOT_TDC, 0, 26, &d24, &q, &x);
   ret = CAMAC_read(udev, SLOT_ADC8, 0, 26, &d24, &q, &x);
@@ -385,9 +395,9 @@ INT begin_of_run(INT run_number, char *error) {
   // Opt in Global Mode register N(25) A(1) F(16)    
   // Buffer size 
   // 0:4096, 1:2048, 2:1024, 3:512, 4:256, 5:128, 6:64, 7:single event
+  //  ret = CAMAC_write(udev, 25, 1, 16, tscc.buffer_size, &q, &x);
   ret = CAMAC_write(udev, 25, 1, 16, tscc.buffer_size, &q, &x);
 
-  printf("FInished stacking...\n");
   // CAMAC_DGG creates a gate pulse with control of delay, width 
   // in 10ns increments. 
   // BUT range is limited to 16bit anyway annd only GG-A (0) provides
@@ -396,7 +406,7 @@ INT begin_of_run(INT run_number, char *error) {
   //                DGG_A Pulser NimO1               invert latch
   ret = CAMAC_DGG(udev, 0,     7,    1, tscc.delay/10, tscc.width/10,     0,    0); 
 
-  printf("FInished stacking...\n");
+
   //  First clear before first LAM/readout
   ret = CAMAC_read(udev, SLOT_ADC8, 0, 9, &d24, &q, &x);
   // ret = CAMAC_read(udev, SLOT_ADCD, 0, 9, &d24, &q, &x);
@@ -414,6 +424,12 @@ INT begin_of_run(INT run_number, char *error) {
   // Set value for deferred transition (to readout last events).
   in_deferred_transition = FALSE;
   finished_clearing_buffer = FALSE;
+
+  // Initialize values for flushing buffer
+  seenFullEvents = false;
+  lastFullEventTime.tv_sec = 2000000000;
+  EventsPerSpill = 0;
+
 
   return SUCCESS;
 }
@@ -524,6 +540,20 @@ extern "C" INT interrupt_configure(INT cmd, INT source, POINTER_T adr)
    return SUCCESS;
 }
 
+// TL
+// Add code to try to flush buffer after spill.
+// Basically, if there has been 5 seconds without a successful ret, then
+// tell CAMAC run is finished.
+// logic 
+//  1) Have a timer (lastFullEventTime) that checks how long since we last had a non-zero USB read.
+//  If the timer shows that more than 5 seconds passed, then initiate special 
+//  readout.  Also have a bool that shows that we had normal triggers (seenFullEvents).
+//  2) Special readout means that we tell CAMAC that run if finished, do 
+//  a usb_read (which should get the half-filled buffer), then tell CAMAC
+//  to restart a run
+//  3) Also always us to dump the triggers per spill in real time (triggersPerSpill).
+//  4) We don't do this check again until we see normal full buffers.
+
 /*-- Event readout -------------------------------------------------*/
 INT read_trigger_event(char *pevent, INT off)
 {
@@ -532,6 +562,32 @@ INT read_trigger_event(char *pevent, INT off)
   
   if(in_deferred_transition){
     number_extra_reads++;
+  }
+  
+  // Do a check to see if we had a fullevent and if it was more than
+  // 5 seconds since then.
+
+
+  //gettimeofday(&lastFullEventTime, NULL);
+  struct timeval currentTime;  
+  gettimeofday(&currentTime, NULL);
+  BOOL inFlushEvent = false;
+  if(seenFullEvents){
+    gettimeofday(&currentTime, NULL);
+    double dtime = currentTime.tv_sec - lastFullEventTime.tv_sec 
+      + (currentTime.tv_usec - lastFullEventTime.tv_usec)/1000000.0;
+    
+    //    printf("dtime: %4.2f",dtime);
+    if(dtime > 5.0){
+      // Stop camac acquisition.  Will allow to read out unfilled buffer.
+      int ret = xxusb_register_write(udev, 1, 0x0); 
+      //      printf("Stopping CAMAC to flush buffer. Stop CAMAC return:%d\n", ret);
+
+      // Make sure we only flush buffer once.
+      seenFullEvents = false; 
+
+      inFlushEvent = true;
+    }
   }
 
   /* init bank structure */
@@ -552,13 +608,9 @@ INT read_trigger_event(char *pevent, INT off)
     nd16 = ret / 2;                 // # of d16
     int nevents = (pdata[0]& 0xfff);   // # of LAM in the buffer
     EventsInRun += nevents;
- #if 0
-    int evtsize = (pdata[1] & 0xffff);  // # of words per event
-    printf("Read data: ret:%d  nd16:%d nevent:%d, evtsize:%d\n", ret, nd16, nevents, evtsize);
-#endif
+    EventsPerSpill += nevents;
 
-    //    if (nevents & 0x8000) return 0;  // Skip event
-    if(pdata[0] & 0x8000)cm_msg(MINFO, "read_trigger_event", "Readout last CAMAC event in run.");
+    //    if(pdata[0] & 0x8000)cm_msg(MINFO, "read_trigger_event", "Readout last CAMAC event in run.");
       
     
     if (nd16 > 0) {
@@ -566,15 +618,39 @@ INT read_trigger_event(char *pevent, INT off)
       pdata += nd16;
     }
 
+    // Code for flushing
+    if(inFlushEvent){
+      // Restarting camac acquisition. 
+      int ret = xxusb_register_write(udev, 1, 0x1);
+      //printf("\nRestarting CAMAC to flush buffer (%i)\n",ret);
+      printf("\n");
+      cm_msg(MINFO, "read_trigger_event", "CAMAC events in last spill=%i", EventsPerSpill);
+      EventsPerSpill = 0;  
+    }else{
+      seenFullEvents = true;
+      lastFullEventTime = currentTime;
+    }
+
     // Close bank
     bk_close(pevent, pdata);
 
-    printf("readout non-zero bytes from CAMAC usb\n");
+    //printf("readout non-zero bytes from CAMAC usb: %i\n",ret);
+    printf("+");
     // Done with a valid event
     return bk_size(pevent); 
 
  } else {
     //    printf("no read ret:%d\n", ret);
+
+    // Code for flushing
+    if(inFlushEvent){
+      // Restarting camac acquisition. 
+      int ret = xxusb_register_write(udev, 1, 0x1);
+      //      printf("\nRestarting CAMAC to flush buffer (%i)\n",ret);
+      printf("\n");
+      cm_msg(MINFO, "read_trigger_event", "CAMAC events in last spill=%i", EventsPerSpill);
+      EventsPerSpill = 0;  
+    }
 
     // we finished the deferred transition when we do a read of USB buffer 
     // and don't get any extra data.
